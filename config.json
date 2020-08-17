@@ -1,0 +1,5 @@
+{
+	"directory": "/Users/username/parentFolder",
+	"gitCommand": "git status -s --branch --renames",
+	"skipUnchanged": false
+}
