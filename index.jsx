@@ -2,7 +2,7 @@ import { css, run } from "uebersicht";
 
 const { directory, gitCommand, skipUnchanged } = require("./config.json");
 
-export const command = `find ${directory} -maxdepth 1 -mindepth 1 -type d -exec sh -c '(echo {} && cd {} && ${gitCommand} && echo)' \\;`;
+export const command = `find ${directory} -maxdepth 1 -mindepth 1 -type d -exec sh -c '(echo {} && cd {} && git fetch -q && ${gitCommand} && echo)' \\;`;
 
 export const refreshFrequency = 5000;
 
@@ -80,16 +80,32 @@ export const render = ({ output, error }) => {
 				untracked: [],
 				renames: [],
 				others: [],
+				changesCount: function () {
+					return (
+						this.added.length +
+						this.deletions.length +
+						this.modified.length +
+						this.renames.length +
+						this.untracked.length +
+						this.others.length
+					);
+				},
 			};
 		} else if (line.startsWith("##")) {
 			const [_, local, remote, ...diff] = line
 				.replaceAll("#", "")
 				.replaceAll("...", " ")
 				.split(" ");
+			const diffStatus = diff
+				.join(" ")
+				.replace("[", "")
+				.replace("]", "")
+				.replace("behind ", "-")
+				.replace("ahead ", "+");
 			result[lastRepo].branch = {
 				local,
 				remote,
-				diff: diff.join(" ").replace("[", "").replace("]", ""),
+				diff: Number(diffStatus === "" ? "0" : diffStatus),
 			};
 		} else {
 			const [_, changeType, fileName] = line.match(/(.{1,2}) (.*)/);
@@ -119,16 +135,19 @@ export const render = ({ output, error }) => {
 	}, {});
 
 	const status = Object.values(repos)
-		.filter((repo) =>
-			skipUnchanged
-				? repo.added.length +
-				  repo.deletions.length +
-				  repo.modified.length +
-				  repo.renames.length +
-				  repo.untracked.length +
-				  repo.others.length
-				: true
-		)
+		.filter((repo) => (skipUnchanged ? repo.changesCount() : true))
+		.sort((a, b) => {
+			const aRank = a.changesCount + a.branch.diff;
+			const bRank = b.changesCount + b.branch.diff;
+			if (aRank > bRank) return 1;
+			if (aRank < bRank) return -1;
+			return (
+				(`origin/${a.branch.local}` !== a.branch.remote ? 0 : 1) -
+				(`origin/${b.branch.local}` !== b.branch.remote ? 0 : 1)
+			);
+		})
+		.slice(0, 6)
+		//.sort((a, b) => a.repoName.localeCompare(b.repoName))
 		.map((repo) => (
 			<div className={repoItem}>
 				{[
@@ -145,7 +164,11 @@ export const render = ({ output, error }) => {
 						<span className={branchInfo}>
 							{repo.branch.local}
 							{repo.branch.remote ? ` ➡️ ${repo.branch.remote}` : ""}
-							{repo.branch.diff ? ` (❗${repo.branch.diff})` : ""}
+							{repo.branch.diff < 0
+								? ` (❗⏬ ${repo.branch.diff * -1})`
+								: repo.branch.diff > 0
+								? ` (❗⏫ ${repo.branch.diff})`
+								: ""}
 						</span>
 					</div>,
 					<ul className={repoChanges}>
